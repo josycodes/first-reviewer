@@ -1,0 +1,87 @@
+<!--
+Fill every {{PLACEHOLDER}}. Delete any section that does not apply.
+Keep this file under 120 lines. It is loaded into every session in this repo —
+anything here competes for attention with the actual task. If a rule is enforced
+by a linter, formatter or CI check, it does not belong here.
+-->
+
+# {{PROJECT_NAME}}
+
+{{ONE_SENTENCE_ON_WHAT_THIS_SERVICE_DOES}}
+{{ONE_SENTENCE_ON_WHO_OR_WHAT_CONSUMES_IT}}
+
+## Commands
+
+Use these exactly. Do not guess an equivalent.
+
+- Install: `{{INSTALL_CMD}}`
+- Run locally: `{{DEV_CMD}}`
+- Full test suite: `{{TEST_CMD}}`
+- Single test file: `{{SINGLE_TEST_CMD}}`
+- Lint: `{{LINT_CMD}}`
+- Type check: `{{TYPECHECK_CMD}}`
+- Build: `{{BUILD_CMD}}`
+- Migrations: `{{MIGRATE_CMD}}`
+
+Prefer the single-test command while iterating. Run the full suite once before reporting work as finished.
+
+## Architecture
+
+Only what cannot be read off the directory tree.
+
+- {{WHERE_REQUESTS_ENTER_AND_WHAT_LAYER_THEY_PASS_THROUGH}}
+- {{WHICH_DIRECTORIES_ARE_ALLOWED_TO_IMPORT_WHICH}}
+- {{WHERE_BUSINESS_LOGIC_BELONGS_VS_WHERE_IT_KEEPS_ENDING_UP}}
+- {{ANY_SERVICE_OR_QUEUE_THIS_REPO_DEPENDS_ON_AT_RUNTIME}}
+
+## Conventions
+
+Only conventions no tool enforces.
+
+- {{ERROR_HANDLING_PATTERN}}
+- {{HOW_CONFIG_AND_SECRETS_ARE_READ}}
+- {{LOGGING_PATTERN_AND_WHAT_MUST_NEVER_BE_LOGGED}}
+- {{API_RESPONSE_SHAPE}}
+- {{HOW_DATABASE_ACCESS_IS_DONE_AND_WHAT_IS_BANNED}}
+
+## Landmines
+
+Things that look fine and are not.
+
+- {{NON_OBVIOUS_THING_THAT_BREAKS_IN_PRODUCTION}}
+- {{FILE_OR_MODULE_WITH_HIDDEN_COUPLING}}
+- {{ENVIRONMENT_DIFFERENCE_BETWEEN_LOCAL_AND_DEPLOYED}}
+
+## Do not touch
+
+- Generated output: {{GENERATED_PATHS}}
+- Vendored or third-party: {{VENDOR_PATHS}}
+- Migrations that have already run — write a new one instead
+- Lockfiles, unless the change is the dependency change itself
+- {{ANYTHING_ELSE_OFF_LIMITS}}
+
+## Ask before
+
+- Adding, removing or upgrading a dependency
+- Changing a public API response, status code or function signature
+- Writing a migration that drops or renames a column
+- Refactoring beyond what the task requires
+- Creating a new top-level directory
+
+## Definition of done
+
+Work is not finished until all of these pass and you have said so explicitly:
+
+1. `{{TEST_CMD}}`
+2. `{{LINT_CMD}}`
+3. `{{TYPECHECK_CMD}}`
+
+If any of them fail, fix the cause. Do not weaken a test, widen a type, or silence a rule to get a green result. If the fix is out of scope, stop and say what is failing and why.
+
+## Git
+
+- Branch names: `{{BRANCH_CONVENTION}}`
+- Commit subjects: {{COMMIT_CONVENTION}}
+- One logical change per commit
+- Never commit directly to `{{PROTECTED_BRANCH}}`
+- No AI attribution in commits: no `Co-Authored-By` trailer, no generated-with footer, nothing in the subject or body indicating a tool wrote the change
