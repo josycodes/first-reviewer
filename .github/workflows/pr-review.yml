@@ -1,0 +1,171 @@
+name: PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      # Add every branch that should be protected by review:
+      # - staging
+      # - production
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  # A new push to the same PR cancels the review still running for the old commit.
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Which file in prompts/domains/ to load stack-specific checks from.
+      DOMAIN: generic
+      # Model used for the review.
+      MODEL: claude-sonnet-4-6
+      # Diff characters sent to the model. Larger diffs are truncated.
+      MAX_DIFF_CHARS: "120000"
+
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          # Full history so the merge base can be resolved.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify credentials are configured
+        env:
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OAUTH_TOKEN}" ] && [ -z "${API_KEY}" ]; then
+            echo "Set either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY as a repository secret." >&2
+            exit 1
+          fi
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "Set SLACK_WEBHOOK_URL as a repository secret." >&2
+            exit 1
+          fi
+
+      - name: Collect the diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .review
+
+          # Three-dot diff: what this branch changed since it left the base,
+          # not everything that has landed on the base since.
+          git diff "${BASE_SHA}...${HEAD_SHA}" \
+            -- . ':(exclude)**/*.lock' ':(exclude)**/*.snap' ':(exclude)**/dist/**' \
+            > .review/diff.txt
+
+          git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > .review/files.txt
+
+          echo "Changed files: $(wc -l < .review/files.txt)"
+          echo "Diff bytes: $(wc -c < .review/diff.txt)"
+
+      - name: Stop if there is nothing to review
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ ! -s .review/diff.txt ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            echo "Diff is empty after exclusions. Skipping review."
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble the prompt
+        if: steps.gate.outputs.empty == 'false'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_DESCRIPTION: ${{ github.event.pull_request.body }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # Substitution is done in Python, not sed: diffs contain slashes,
+          # ampersands and backslashes that would corrupt a sed replacement.
+          python3 - <<'PY'
+          import os, pathlib
+
+          root = pathlib.Path(".")
+          rubric = (root / "prompts" / "review.md").read_text()
+
+          domain_file = root / "prompts" / "domains" / f"{os.environ['DOMAIN']}.md"
+          if not domain_file.exists():
+              domain_file = root / "prompts" / "domains" / "generic.md"
+          domain = domain_file.read_text()
+
+          diff = (root / ".review" / "diff.txt").read_text(errors="replace")
+          limit = int(os.environ["MAX_DIFF_CHARS"])
+          if len(diff) > limit:
+              diff = diff[:limit] + "\n\n[Diff truncated. Files beyond this point were not reviewed.]"
+
+          files = (root / ".review" / "files.txt").read_text()
+
+          values = {
+              "{{DOMAIN_CHECKS}}": domain,
+              "{{PR_TITLE}}": os.environ.get("PR_TITLE", ""),
+              "{{PR_AUTHOR}}": os.environ.get("PR_AUTHOR", ""),
+              "{{PR_DESCRIPTION}}": os.environ.get("PR_DESCRIPTION") or "(no description given)",
+              "{{BASE_BRANCH}}": os.environ.get("BASE_BRANCH", ""),
+              "{{CHANGED_FILES}}": files,
+              "{{DIFF}}": diff,
+          }
+          for token, value in values.items():
+              rubric = rubric.replace(token, value)
+
+          (root / ".review" / "prompt.txt").write_text(rubric)
+          print(f"Prompt characters: {len(rubric)}")
+          PY
+
+      - name: Install Claude Code
+        if: steps.gate.outputs.empty == 'false'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run the review
+        if: steps.gate.outputs.empty == 'false'
+        env:
+          # Whichever secret is set is the one that gets used. If both are set,
+          # the API key wins and usage is billed to the API account.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          claude -p --model "${MODEL}" --output-format text \
+            < .review/prompt.txt \
+            > .review/review.txt
+          echo "Review characters: $(wc -c < .review/review.txt)"
+
+      - name: Post to Slack
+        if: steps.gate.outputs.empty == 'false'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/post-to-slack.sh
+          ./scripts/post-to-slack.sh < .review/review.txt
+
+      - name: Keep the review as an artifact
+        if: always() && steps.gate.outputs.empty == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-${{ github.event.pull_request.number }}
+          path: .review/review.txt
+          retention-days: 14
